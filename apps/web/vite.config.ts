@@ -42,6 +42,7 @@ export default defineConfig({
       input: {
         main: `${root}index.html`,
         controller: `${root}controller.html`,
+        expenses: `${root}expenses.html`,
       },
     },
   },
