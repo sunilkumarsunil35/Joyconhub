@@ -36,6 +36,10 @@ A static site can't host the WebSocket relay, so the GitHub Pages build (`VITE_T
 - With no server checking messages in this mode, the hub and phone validate every message themselves with the same zod schemas.
 - To use your own signalling server instead (`npx peerjs --port 9000`), build with `VITE_PEER_HOST`, `VITE_PEER_PORT`, `VITE_PEER_PATH`, and `VITE_PEER_SECURE=0` for plain HTTP.
 
+## Money Tracker (Android app)
+
+This repository also contains **Money Tracker**, an Android app for tracking money in and out by category, by day and by month. Install it on an Android phone from https://github.com/sunilkumarsunil35/Joyconhub/releases/latest/download/MoneyTracker.apk. See [`apps/money/README.md`](apps/money/README.md) for details.
+
 ## Run it locally (relay server)
 
 For development, or offline play on your own network, a small Node relay server is used instead:
@@ -99,6 +103,7 @@ Controller settings (⚙️): tilt range (sensitivity), invert pitch or roll, tw
 
 ```
 apps/
+  money/         Money Tracker Android app (Capacitor + Vite): income/expense tracker
   server/        Fastify + ws relay: rooms, tokens, message validation (local dev / self-hosting)
   web/           Vite multi-page app: hub (index.html) + phone controller (controller.html)
                  src/net/: transports (WebSocket relay, PeerJS WebRTC peer-to-peer)

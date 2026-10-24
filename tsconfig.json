@@ -20,6 +20,8 @@
     "apps/*/src",
     "apps/*/test",
     "apps/web/vite.config.ts",
+    "apps/money/vite.config.ts",
+    "apps/money/capacitor.config.ts",
     "packages/*/src",
     "packages/*/test",
     "games/*/src",

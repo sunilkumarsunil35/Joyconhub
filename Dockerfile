@@ -4,6 +4,7 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
+COPY apps/money/package.json apps/money/
 COPY packages/protocol/package.json packages/protocol/
 COPY packages/input/package.json packages/input/
 COPY packages/game-sdk/package.json packages/game-sdk/
