@@ -35,5 +35,7 @@
         </provider>
     </application>
 
-    <!-- No permissions: the app works fully offline and never sends your data anywhere. -->
+    <!-- Only permission: read bank SMS to add entries automatically (asked for when you turn it on).
+         There is no internet permission, so nothing can leave the phone. -->
+    <uses-permission android:name="android.permission.READ_SMS" />
 </manifest>

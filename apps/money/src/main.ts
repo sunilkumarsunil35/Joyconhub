@@ -18,7 +18,17 @@ import {
   type Transaction,
   type TxType,
 } from './model.ts';
-import { isNative, onBackButton, saveTextFile } from './native.ts';
+import {
+  isNative,
+  onBackButton,
+  onResume,
+  openAppSettings,
+  readSms,
+  saveTextFile,
+  smsPermission,
+  smsSupported,
+} from './native.ts';
+import { transactionsFromSms } from './sms.ts';
 import { escapeHtml, readJSON, writeJSON } from './storage.ts';
 
 type Tab = 'daily' | 'monthly' | 'categories' | 'transactions';
@@ -37,6 +47,7 @@ interface Prefs {
 
 const DATA_KEY = 'money-tracker.data.v1';
 const PREFS_KEY = 'money-tracker.prefs';
+const SMS_KEY = 'money-tracker.sms';
 const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'SAR', 'CAD', 'AUD', 'SGD', 'JPY'];
 const EURO_REGIONS = ['DE', 'FR', 'IT', 'ES', 'NL', 'BE', 'AT', 'IE', 'PT', 'FI', 'GR'];
 
@@ -75,6 +86,31 @@ function persist(): void {
 function persistPrefs(): void {
   const { tab, scope, showEmptyDays } = state;
   writeJSON(PREFS_KEY, { tab, scope, showEmptyDays });
+}
+
+interface SmsSettings {
+  enabled: boolean;
+  /** Messages received after this time (ms) are still to be read. */
+  since: number;
+  /** Inbox ids already handled, so a message is never added twice. */
+  seen: string[];
+  lastChecked: number;
+  /** The SMS permission was refused (or blocked by Android's restricted settings). */
+  denied: boolean;
+  bannerDismissed: boolean;
+}
+
+const sms = readJSON<SmsSettings>(SMS_KEY, {
+  enabled: false,
+  since: 0,
+  seen: [],
+  lastChecked: 0,
+  denied: false,
+  bannerDismissed: false,
+});
+
+function persistSms(): void {
+  writeJSON(SMS_KEY, sms);
 }
 
 function newId(): string {
@@ -187,6 +223,7 @@ app.innerHTML = `
       <button class="menu-row" id="import"><span>📥 Restore or import</span><small>From a backup or a CSV (date, type, category, amount, note)</small></button>
       <button class="menu-row" id="export-csv"><span>📤 Export as CSV</span><small>Open it in Excel or Google Sheets</small></button>
       <input type="file" id="import-file" accept=".csv,.json,text/csv,application/json,text/plain" hidden />
+      <div id="sms-settings"></div>
       <p class="hint">Your data is stored only on this phone. Back up regularly: uninstalling the app or clearing its data erases it.</p>
     </section>
 
@@ -271,7 +308,7 @@ function renderSummary(): void {
 }
 
 function renderView(): void {
-  if (state.tab === 'daily') view.innerHTML = dailyView();
+  if (state.tab === 'daily') view.innerHTML = smsBanner() + dailyView();
   else if (state.tab === 'monthly') view.innerHTML = monthlyView();
   else if (state.tab === 'categories') view.innerHTML = categoriesView();
   else {
@@ -305,7 +342,7 @@ function barChart(
     })
     .join('');
   return `<div class="chart">
-    <div class="legend"><span class="key in"></span>In<span class="key out"></span>Out<span class="max">Peak ${money(max)}</span></div>
+    <div class="legend"><span class="key in"></span>In<span class="key out"></span>Out${max > 1 ? `<span class="max">Peak ${money(max)}</span>` : ''}</div>
     <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Money in and out chart">
       <line class="axis" x1="0" x2="${W}" y1="${H}" y2="${H}" />${bars}
     </svg>
@@ -528,7 +565,7 @@ function renderTxList(): void {
       lastDate = t.date;
       return `${head}<li class="tx ${t.type} ${t.id === state.editingId ? 'editing' : ''}" data-edit="${t.id}" tabindex="0">
         <span class="tx-icon">${t.type === 'income' ? '↓' : '↑'}</span>
-        <div class="tx-main"><b>${escapeHtml(t.category)}</b>${t.note ? `<small>${escapeHtml(t.note)}</small>` : ''}</div>
+        <div class="tx-main"><b>${escapeHtml(t.category)}${t.source === 'sms' ? ' <span class="badge">SMS</span>' : ''}</b>${t.note ? `<small>${escapeHtml(t.note)}</small>` : ''}</div>
         <span class="tx-amt">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</span>
       </li>`;
     })
@@ -769,6 +806,142 @@ view.addEventListener('input', (e) => {
   renderTxList();
 });
 
+// ---- bank SMS ----
+
+function smsBanner(): string {
+  if (!smsSupported() || sms.enabled || sms.bannerDismissed) return '';
+  return `<div class="banner" id="sms-banner">
+    <span>📩</span>
+    <p><b>Add entries from bank SMS automatically</b><small>Your bank's debit and credit messages become entries.</small></p>
+    <button class="ghost small" data-sms="enable">Turn on</button>
+    <button class="icon-btn" data-sms="dismiss" aria-label="Dismiss">✕</button>
+  </div>`;
+}
+
+function renderSmsSettings(): void {
+  const el = $('sms-settings');
+  if (!smsSupported()) {
+    el.innerHTML = '';
+    return;
+  }
+  const checked = sms.lastChecked
+    ? `Last checked ${new Date(sms.lastChecked).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}`
+    : 'Not checked yet';
+  el.innerHTML = `
+    <label class="menu-row switch-row">
+      <span>📩 Auto-add from bank SMS<small>${sms.enabled ? checked : 'Reads bank debit and credit messages on this phone. Nothing leaves the phone.'}</small></span>
+      <input type="checkbox" id="sms-toggle" role="switch" ${sms.enabled ? 'checked' : ''} />
+    </label>
+    ${sms.enabled ? '<button class="menu-row" data-sms="scan"><span>🔄 Check bank SMS now</span><small>New entries are tagged SMS. Tap one to change its category.</small></button>' : ''}
+    ${
+      sms.denied
+        ? `<div class="warn">
+            <p><b>Android hasn't allowed SMS access.</b> Open App info, tap <b>⋮ → Allow restricted settings</b> if you see it, then <b>Permissions → SMS → Allow</b>. Come back and switch this on again.</p>
+            <button class="ghost small" data-sms="settings">Open App info</button>
+          </div>`
+        : ''
+    }`;
+}
+
+let scanning = false;
+
+/** Read new bank SMS and add them as entries. `manual` reports the result even when empty. */
+async function scanSms(manual = false): Promise<void> {
+  if (!sms.enabled || scanning) return;
+  scanning = true;
+  try {
+    if ((await smsPermission()) !== 'granted') {
+      sms.denied = true;
+      sms.enabled = false;
+      persistSms();
+      renderSmsSettings();
+      if (manual) showSheet(menu);
+      return;
+    }
+    const messages = await readSms(sms.since);
+    const seen = new Set(sms.seen);
+    const { transactions, processed } = transactionsFromSms(
+      messages,
+      state.transactions,
+      seen,
+      newId,
+    );
+    sms.since = Math.max(sms.since, ...messages.map((m) => m.date));
+    sms.seen = [...sms.seen, ...processed].slice(-3000);
+    sms.lastChecked = Date.now();
+    sms.denied = false;
+    persistSms();
+    if (transactions.length) {
+      state.transactions.push(...transactions);
+      persist();
+      render();
+      toast(
+        transactions.length === 1
+          ? `Added from SMS: ${transactions[0]!.type === 'income' ? '+' : '−'}${money(transactions[0]!.amount)} · ${transactions[0]!.category}`
+          : `Added ${transactions.length} entries from bank SMS`,
+      );
+    } else if (manual) {
+      toast('No new bank SMS');
+    }
+    renderSmsSettings();
+  } catch (err) {
+    if (manual) alert(`Couldn't read SMS: ${err}`);
+  } finally {
+    scanning = false;
+  }
+}
+
+async function enableSms(): Promise<void> {
+  const permission = await smsPermission(true);
+  if (permission !== 'granted') {
+    sms.denied = true;
+    persistSms();
+    renderSmsSettings();
+    showSheet(menu);
+    return;
+  }
+  const now = Date.now();
+  const monthStart = parseDate(`${monthOf(toISODate(new Date()))}-01`).getTime();
+  sms.since = confirm('Also add bank SMS you received earlier this month?') ? monthStart : now;
+  sms.enabled = true;
+  sms.denied = false;
+  persistSms();
+  render();
+  renderSmsSettings();
+  await scanSms(true);
+}
+
+app.addEventListener('click', (e) => {
+  const action = (e.target as HTMLElement).closest<HTMLElement>('[data-sms]')?.dataset.sms;
+  if (action === 'enable') void enableSms();
+  else if (action === 'scan') void scanSms(true);
+  else if (action === 'settings') void openAppSettings();
+  else if (action === 'dismiss') {
+    sms.bannerDismissed = true;
+    persistSms();
+    renderView();
+  }
+});
+
+app.addEventListener('change', (e) => {
+  const el = e.target as HTMLInputElement;
+  if (el.id !== 'sms-toggle') return;
+  if (el.checked) {
+    void enableSms();
+  } else {
+    sms.enabled = false;
+    persistSms();
+    renderSmsSettings();
+    renderView();
+  }
+});
+
+onResume(() => {
+  // The date may have changed while the app was in the background.
+  render();
+  void scanSms();
+});
+
 // Android back button: close a sheet, then step back to the Daily tab, then leave the app.
 onBackButton(() => {
   if (closeSheet()) return true;
@@ -860,3 +1033,5 @@ fileInput.onchange = async () => {
 
 setFormType(state.formType);
 render();
+renderSmsSettings();
+void scanSms();

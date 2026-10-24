@@ -894,3 +894,125 @@ button {
     display: none;
   }
 }
+
+/* ---- bank SMS ---- */
+
+.money .badge {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: 2px;
+}
+
+.money .banner {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    'icon text close'
+    'icon action action';
+  align-items: center;
+  gap: 8px 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.money .banner > span {
+  grid-area: icon;
+  align-self: start;
+  font-size: 1.4rem;
+}
+
+.money .banner p {
+  grid-area: text;
+}
+
+.money .banner [data-sms='enable'] {
+  grid-area: action;
+  justify-self: start;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.money .banner [data-sms='dismiss'] {
+  grid-area: close;
+  align-self: start;
+}
+
+.money .banner p {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.money .banner small {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.money .banner .icon-btn {
+  width: 30px;
+  height: 30px;
+  font-size: 0.85rem;
+}
+
+.money label.menu-row.switch-row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.money .switch-row input {
+  flex: none;
+  width: 46px;
+  height: 26px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 99px;
+  background: var(--panel-strong);
+  cursor: pointer;
+  appearance: none;
+  transition: background 0.15s;
+}
+
+.money .switch-row input::before {
+  content: '';
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: 3px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.15s;
+}
+
+.money .switch-row input:checked {
+  background: var(--income);
+}
+
+.money .switch-row input:checked::before {
+  transform: translateX(20px);
+}
+
+.money .warn {
+  margin-bottom: 8px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bad) 8%, transparent);
+  font-size: 0.85rem;
+}
+
+.money .warn p {
+  margin: 0 0 10px;
+}

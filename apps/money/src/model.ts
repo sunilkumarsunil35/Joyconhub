@@ -11,6 +11,13 @@ export interface Transaction {
   /** Local calendar date, `YYYY-MM-DD`. */
   date: string;
   note: string;
+  /** Set when the entry was added automatically from a bank SMS. */
+  source?: 'sms';
+  smsId?: string;
+  /** When the SMS arrived, ms since epoch (used to spot duplicate SMS). */
+  smsAt?: number;
+  /** Bank / UPI reference number from the SMS. */
+  ref?: string;
 }
 
 export interface Totals {
