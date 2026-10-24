@@ -36,19 +36,9 @@ A static site can't host the WebSocket relay, so the GitHub Pages build (`VITE_T
 - With no server checking messages in this mode, the hub and phone validate every message themselves with the same zod schemas.
 - To use your own signalling server instead (`npx peerjs --port 9000`), build with `VITE_PEER_HOST`, `VITE_PEER_PORT`, `VITE_PEER_PATH`, and `VITE_PEER_SECURE=0` for plain HTTP.
 
-## Money Tracker (expense tracker)
+## Money Tracker (Android app)
 
-The site also includes **Money Tracker**, an income and expense tracker. It's linked from the hub's top bar and lives at `expenses.html` (on GitHub Pages: https://sunilkumarsunil35.github.io/Joyconhub/expenses.html).
-
-- **Add incomings and outgoings** with an amount, a category (pick a built-in one or type your own), a date and an optional note. You can edit or delete any entry.
-- **Summary cards** show the month's income, expenses, net and savings rate, plus today's totals and your all-time balance.
-- **Daily tracker:** a chart and a table for each day of the month, with income, expenses, net and the running month-to-date balance. Click a day to see its transactions.
-- **Monthly tracker:** the same view for each month of the year, with the savings rate and yearly totals. Click a month to open its daily view.
-- **Categories:** spending and income per category for the month, the year or all time, with each category's share. Click a category to list its transactions.
-- **Transactions:** filter by type, category or note text.
-- **Currency selector**, **Export CSV**, **Backup** (JSON) and **Import** (CSV with `date,type,category,amount,note` columns, where `type` is `income`/`expense` or `credit`/`debit`, or a backup file).
-
-Data is stored in your browser (`localStorage`) and never leaves your device. Use Backup and Import to move it to another browser or phone. Amounts are stored as whole cents or paise, so totals don't pick up rounding errors.
+This repository also contains **Money Tracker**, an Android app for tracking money in and out by category, by day and by month. Install it on an Android phone from https://github.com/sunilkumarsunil35/Joyconhub/releases/latest/download/MoneyTracker.apk. See [`apps/money/README.md`](apps/money/README.md) for details.
 
 ## Run it locally (relay server)
 
@@ -113,9 +103,9 @@ Controller settings (⚙️): tilt range (sensitivity), invert pitch or roll, tw
 
 ```
 apps/
+  money/         Money Tracker Android app (Capacitor + Vite): income/expense tracker
   server/        Fastify + ws relay: rooms, tokens, message validation (local dev / self-hosting)
   web/           Vite multi-page app: hub (index.html) + phone controller (controller.html)
-                 + Money Tracker (expenses.html, src/expenses/)
                  src/net/: transports (WebSocket relay, PeerJS WebRTC peer-to-peer)
 packages/
   protocol/      Shared message types + zod schemas (the wire contract)

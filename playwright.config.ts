@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-import { PEER_PORT, PORT, STATIC_PORT } from './e2e/ports.ts';
+import { MONEY_PORT, PEER_PORT, PORT, STATIC_PORT } from './e2e/ports.ts';
 
 export default defineConfig({
   testDir: 'e2e',
@@ -33,6 +33,12 @@ export default defineConfig({
       command: `STATIC_PORT=${STATIC_PORT} node e2e/static-server.mjs apps/web/dist`,
       url: `http://localhost:${STATIC_PORT}/health`,
       reuseExistingServer: !process.env.CI,
+    },
+    {
+      command: `pnpm --filter @joyconhub/money build && STATIC_PORT=${MONEY_PORT} STATIC_PREFIX=/ node e2e/static-server.mjs apps/money/dist`,
+      url: `http://localhost:${MONEY_PORT}/health`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
     },
   ],
 });

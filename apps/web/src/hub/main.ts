@@ -27,7 +27,7 @@ function renderHome(): void {
     <div class="hub">
       <header class="topbar">
         <span class="logo"><span class="pills"><i></i><i></i></span>JoyCon <b>Hub</b></span>
-        <nav class="links"><a href="expenses.html">Money Tracker</a><a href="#how">How it works</a></nav>
+        <a href="#how">How it works</a>
       </header>
       <section class="hero">
         <span class="eyebrow">📱 No app. No sign-up. Just scan.</span>

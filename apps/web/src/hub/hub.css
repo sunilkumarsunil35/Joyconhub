@@ -17,10 +17,6 @@ body {
   justify-content: space-between;
   gap: 16px;
 }
-.topbar .links {
-  display: flex;
-  gap: 20px;
-}
 .topbar a {
   color: var(--muted);
   text-decoration: none;

@@ -11,7 +11,7 @@ import {
   toCSV,
   totals,
   type Transaction,
-} from '../src/expenses/model.ts';
+} from '../src/model.ts';
 
 let n = 0;
 const id = () => `t${++n}`;

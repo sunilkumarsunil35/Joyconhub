@@ -1,0 +1,56 @@
+name: Money Tracker Android app
+
+# Builds the Money Tracker APK and publishes it as the "money-tracker-latest" GitHub release, so the
+# newest version is always at
+# https://github.com/sunilkumarsunil35/Joyconhub/releases/latest/download/MoneyTracker.apk
+
+on:
+  push:
+    paths:
+      - 'apps/money/**'
+      - '.github/workflows/android.yml'
+      - 'pnpm-lock.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: money-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @joyconhub/money exec vite build
+      - run: pnpm --filter @joyconhub/money exec cap sync android
+      - name: Build APK
+        working-directory: apps/money/android
+        run: ./gradlew assembleRelease -PversionCode=${{ github.run_number }}
+      - run: cp apps/money/android/app/build/outputs/apk/release/app-release.apk MoneyTracker.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MoneyTracker-apk
+          path: MoneyTracker.apk
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete money-tracker-latest --yes --cleanup-tag || true
+          gh release create money-tracker-latest MoneyTracker.apk \
+            --target "$GITHUB_SHA" --latest \
+            --title "Money Tracker (Android) · build ${{ github.run_number }}" \
+            --notes "Open this page on your Android phone and tap **MoneyTracker.apk** to download and install it. To update later, install the newer APK the same way: your entries are kept. Built from \`${GITHUB_REF_NAME}\` at ${GITHUB_SHA::7}."

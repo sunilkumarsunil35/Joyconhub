@@ -1,6 +1,4 @@
-import '../shared/theme.css';
-import './expenses.css';
-import { escapeHtml, readJSON, writeJSON } from '../shared/storage.ts';
+import './money.css';
 import {
   DEFAULT_CATEGORIES,
   addMonths,
@@ -20,6 +18,8 @@ import {
   type Transaction,
   type TxType,
 } from './model.ts';
+import { isNative, onBackButton, saveTextFile } from './native.ts';
+import { escapeHtml, readJSON, writeJSON } from './storage.ts';
 
 type Tab = 'daily' | 'monthly' | 'categories' | 'transactions';
 type Scope = 'month' | 'year' | 'all';
@@ -35,8 +35,8 @@ interface Prefs {
   showEmptyDays: boolean;
 }
 
-const DATA_KEY = 'joyconhub.expenses.v1';
-const PREFS_KEY = 'joyconhub.expenses.prefs';
+const DATA_KEY = 'money-tracker.data.v1';
+const PREFS_KEY = 'money-tracker.prefs';
 const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'SAR', 'CAD', 'AUD', 'SGD', 'JPY'];
 const EURO_REGIONS = ['DE', 'FR', 'IT', 'ES', 'NL', 'BE', 'AT', 'IE', 'PT', 'FI', 'GR'];
 
@@ -56,11 +56,11 @@ function guessCurrency(): string {
   return byRegion[region] ?? (EURO_REGIONS.includes(region) ? 'EUR' : 'USD');
 }
 
-const saved = readJSON<Saved>('local', DATA_KEY, { transactions: [], currency: guessCurrency() });
+const saved = readJSON<Saved>(DATA_KEY, { transactions: [], currency: guessCurrency() });
 const state = {
   transactions: (Array.isArray(saved.transactions) ? saved.transactions : []).filter(isTransaction),
   currency: CURRENCIES.includes(saved.currency) ? saved.currency : guessCurrency(),
-  ...readJSON<Prefs>('local', PREFS_KEY, { tab: 'daily', scope: 'month', showEmptyDays: false }),
+  ...readJSON<Prefs>(PREFS_KEY, { tab: 'daily', scope: 'month', showEmptyDays: false }),
   month: monthOf(toISODate(new Date())),
   year: new Date().getFullYear(),
   formType: 'expense' as TxType,
@@ -69,12 +69,12 @@ const state = {
 };
 
 function persist(): void {
-  writeJSON('local', DATA_KEY, { transactions: state.transactions, currency: state.currency });
+  writeJSON(DATA_KEY, { transactions: state.transactions, currency: state.currency });
 }
 
 function persistPrefs(): void {
   const { tab, scope, showEmptyDays } = state;
-  writeJSON('local', PREFS_KEY, { tab, scope, showEmptyDays });
+  writeJSON(PREFS_KEY, { tab, scope, showEmptyDays });
 }
 
 function newId(): string {
@@ -93,6 +93,9 @@ function setCurrency(code: string): void {
 setCurrency(state.currency);
 
 const money = (minor: number) => moneyFmt.format(minor / 100);
+/** Drops ".00" from whole amounts, for the summary cards where space is tight. */
+const short = (minor: number) =>
+  minor % 100 ? money(minor) : moneyFmt.format(minor / 100).replace(/[.,]00(?=\D*$)/, '');
 const signed = (minor: number) => (minor > 0 ? '+' : '') + money(minor);
 const netClass = (minor: number) => (minor > 0 ? 'pos' : minor < 0 ? 'neg' : '');
 
@@ -120,65 +123,79 @@ const app = document.getElementById('app')!;
 app.innerHTML = `
   <div class="money">
     <header class="topbar">
-      <span class="logo"><span class="coin">₹$</span>Money <b>Tracker</b></span>
-      <div class="top-actions">
-        <label class="currency">Currency
-          <select id="currency">${CURRENCIES.map((c) => `<option>${c}</option>`).join('')}</select>
-        </label>
-        <button class="ghost" id="export-csv" title="Download all transactions as CSV">Export CSV</button>
-        <button class="ghost" id="export-json" title="Download a full backup">Backup</button>
-        <button class="ghost" id="import" title="Import a CSV or a backup file">Import</button>
-        <input type="file" id="import-file" accept=".csv,.json,text/csv,application/json" hidden />
-        <a class="ghost" href="./">← Hub</a>
-      </div>
+      <span class="logo"><span class="coin">₹</span>Money <b>Tracker</b></span>
+      <button class="icon-btn" id="menu-open" aria-label="Menu">⋮</button>
     </header>
 
     <nav class="month-nav" aria-label="Month">
       <button class="icon-btn" id="prev-month" aria-label="Previous month">‹</button>
       <h1 id="month-title"></h1>
       <button class="icon-btn" id="next-month" aria-label="Next month">›</button>
-      <button class="ghost small" id="this-month">This month</button>
+      <button class="ghost small" id="this-month">Today</button>
     </nav>
 
     <section class="summary" id="summary"></section>
 
-    <div class="layout">
-      <aside class="panel form-panel">
-        <h2 id="form-title">Add transaction</h2>
-        <form id="tx-form" autocomplete="off">
-          <div class="segmented" role="radiogroup" aria-label="Type">
-            <button type="button" data-type="expense" role="radio">− Expense</button>
-            <button type="button" data-type="income" role="radio">+ Income</button>
-          </div>
-          <label>Amount<input id="f-amount" inputmode="decimal" placeholder="0.00" required /></label>
-          <label>Category<input id="f-category" list="category-list" placeholder="Pick or type a new one" required /></label>
-          <datalist id="category-list"></datalist>
-          <div class="chips" id="category-chips"></div>
-          <label>Date<input id="f-date" type="date" required /></label>
-          <label><span>Note <span class="opt">(optional)</span></span><input id="f-note" maxlength="120" placeholder="e.g. Dinner with friends" /></label>
-          <p class="form-error" id="form-error" role="alert"></p>
-          <div class="form-actions">
-            <button type="submit" class="primary" id="f-submit">Add expense</button>
-            <button type="button" class="ghost" id="f-cancel" hidden>Cancel</button>
-          </div>
-        </form>
-      </aside>
+    <main class="views" id="view"></main>
 
-      <main class="panel views">
-        <div class="tabs" role="tablist">
-          <button role="tab" data-tab="daily">Daily</button>
-          <button role="tab" data-tab="monthly">Monthly</button>
-          <button role="tab" data-tab="categories">Categories</button>
-          <button role="tab" data-tab="transactions">Transactions</button>
+    <nav class="tabbar" role="tablist">
+      <button role="tab" data-tab="daily"><i>📅</i>Daily</button>
+      <button role="tab" data-tab="monthly"><i>📊</i>Monthly</button>
+      <button role="tab" data-tab="categories"><i>🏷️</i>Categories</button>
+      <button role="tab" data-tab="transactions"><i>🧾</i>History</button>
+    </nav>
+
+    <button class="fab" id="add-open" aria-label="Add income or expense">+</button>
+
+    <div class="backdrop" id="backdrop" hidden></div>
+
+    <section class="sheet" id="tx-sheet" role="dialog" aria-modal="true" aria-labelledby="form-title" hidden>
+      <div class="sheet-head">
+        <h2 id="form-title">Add transaction</h2>
+        <button class="icon-btn" id="f-close" aria-label="Close">✕</button>
+      </div>
+      <form id="tx-form" autocomplete="off">
+        <div class="segmented" role="radiogroup" aria-label="Type">
+          <button type="button" data-type="expense" role="radio">− Money out</button>
+          <button type="button" data-type="income" role="radio">+ Money in</button>
         </div>
-        <div id="view"></div>
-      </main>
-    </div>
-    <footer>Your data is stored only in this browser. Use Backup to keep a copy or move it to another device.</footer>
+        <label>Amount<input id="f-amount" inputmode="decimal" enterkeyhint="next" placeholder="0.00" required /></label>
+        <label>Category<input id="f-category" list="category-list" placeholder="Tap one below or type your own" required /></label>
+        <datalist id="category-list"></datalist>
+        <div class="chips" id="category-chips"></div>
+        <div class="row">
+          <label>Date<input id="f-date" type="date" required /></label>
+          <label><span>Note <span class="opt">(optional)</span></span><input id="f-note" maxlength="120" enterkeyhint="done" placeholder="e.g. Lunch" /></label>
+        </div>
+        <p class="form-error" id="form-error" role="alert"></p>
+        <div class="form-actions">
+          <button type="button" class="ghost danger" id="f-delete" hidden>Delete</button>
+          <button type="submit" class="primary" id="f-submit">Add expense</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="sheet" id="menu-sheet" role="dialog" aria-modal="true" aria-label="Menu" hidden>
+      <div class="sheet-head">
+        <h2>Settings & data</h2>
+        <button class="icon-btn" data-close aria-label="Close">✕</button>
+      </div>
+      <label class="menu-row">Currency
+        <select id="currency">${CURRENCIES.map((c) => `<option>${c}</option>`).join('')}</select>
+      </label>
+      <button class="menu-row" id="export-json"><span>💾 Back up all data</span><small>Save a file to Drive, Files or WhatsApp</small></button>
+      <button class="menu-row" id="import"><span>📥 Restore or import</span><small>From a backup or a CSV (date, type, category, amount, note)</small></button>
+      <button class="menu-row" id="export-csv"><span>📤 Export as CSV</span><small>Open it in Excel or Google Sheets</small></button>
+      <input type="file" id="import-file" accept=".csv,.json,text/csv,application/json,text/plain" hidden />
+      <p class="hint">Your data is stored only on this phone. Back up regularly: uninstalling the app or clearing its data erases it.</p>
+    </section>
+
+    <div class="toast" id="toast" role="status" hidden></div>
   </div>`;
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const form = {
+  sheet: $('tx-sheet'),
   el: $<HTMLFormElement>('tx-form'),
   amount: $<HTMLInputElement>('f-amount'),
   category: $<HTMLInputElement>('f-category'),
@@ -186,9 +203,48 @@ const form = {
   note: $<HTMLInputElement>('f-note'),
   error: $('form-error'),
   submit: $<HTMLButtonElement>('f-submit'),
-  cancel: $<HTMLButtonElement>('f-cancel'),
+  del: $<HTMLButtonElement>('f-delete'),
 };
+const menu = $('menu-sheet');
+const backdrop = $('backdrop');
 const view = $('view');
+
+// ---- sheets & toast ----
+
+let openSheet: HTMLElement | null = null;
+
+function showSheet(sheet: HTMLElement): void {
+  if (openSheet && openSheet !== sheet) openSheet.hidden = true;
+  openSheet = sheet;
+  sheet.hidden = false;
+  backdrop.hidden = false;
+}
+
+function closeSheet(): boolean {
+  if (!openSheet) return false;
+  openSheet.hidden = true;
+  openSheet = null;
+  backdrop.hidden = true;
+  if (state.editingId) {
+    state.editingId = null;
+    renderTxList();
+  }
+  return true;
+}
+
+backdrop.onclick = () => closeSheet();
+$('f-close').onclick = () => closeSheet();
+menu.querySelector<HTMLButtonElement>('[data-close]')!.onclick = () => closeSheet();
+$('menu-open').onclick = () => showSheet(menu);
+
+let toastTimer = 0;
+function toast(msg: string): void {
+  const el = $('toast');
+  el.textContent = msg;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => (el.hidden = true), 2200);
+}
 
 // ---- rendering ----
 
@@ -207,11 +263,11 @@ function renderSummary(): void {
   const today = toISODate(new Date());
   const t = totals(state.transactions.filter((x) => x.date === today));
   $('summary').innerHTML = `
-    <div class="stat income"><span>Income</span><strong>${money(m.income)}</strong><small>${monthLabel(state.month, 'short')}</small></div>
-    <div class="stat expense"><span>Expenses</span><strong>${money(m.expense)}</strong><small>${monthLabel(state.month, 'short')}</small></div>
-    <div class="stat net ${netClass(m.net)}"><span>Net this month</span><strong>${signed(m.net)}</strong><small>${m.income ? `${Math.round((m.net / m.income) * 100)}% saved` : `${m.count} transactions`}</small></div>
-    <div class="stat today"><span>Today</span><strong>${money(t.expense)}</strong><small>spent · ${money(t.income)} received</small></div>
-    <div class="stat balance ${netClass(all.net)}"><span>Overall balance</span><strong>${signed(all.net)}</strong><small>all time</small></div>`;
+    <div class="stat income"><span>Money in</span><strong>${short(m.income)}</strong></div>
+    <div class="stat expense"><span>Money out</span><strong>${short(m.expense)}</strong></div>
+    <div class="stat net ${netClass(m.net)}"><span>Net${m.income ? ` · ${Math.round((m.net / m.income) * 100)}%` : ''}</span><strong>${(m.net > 0 ? '+' : '') + short(m.net)}</strong></div>
+    <div class="stat today wide-stat"><span>Spent today</span><strong>${short(t.expense)}</strong>${t.income ? `<small>${short(t.income)} in</small>` : ''}</div>
+    <div class="stat balance wide-stat ${netClass(all.net)}"><span>Overall balance</span><strong>${(all.net > 0 ? '+' : '') + short(all.net)}</strong></div>`;
 }
 
 function renderView(): void {
@@ -240,24 +296,24 @@ function barChart(
       const x = i * slot + slot / 2;
       const hi = (s.income / max) * (H - 10);
       const he = (s.expense / max) * (H - 10);
-      const label =
-        i % labelEvery === 0 || i === slots.length - 1
-          ? `<text x="${x}" y="${H + 22}" text-anchor="middle">${s.label}</text>`
-          : '';
       return `<g class="slot" ${attr}="${s.key}">
-        <title>${escapeHtml(s.title)}\nIncome: ${money(s.income)}\nExpenses: ${money(s.expense)}</title>
+        <title>${escapeHtml(s.title)}\nIn: ${money(s.income)}\nOut: ${money(s.expense)}</title>
         <rect class="hit" x="${i * slot}" y="0" width="${slot}" height="${H}" />
         ${s.income ? `<rect class="bar-in" x="${x - bar - 1}" y="${H - hi}" width="${bar}" height="${hi}" rx="3" />` : ''}
         ${s.expense ? `<rect class="bar-out" x="${x + 1}" y="${H - he}" width="${bar}" height="${he}" rx="3" />` : ''}
-        ${label}
       </g>`;
     })
     .join('');
   return `<div class="chart">
-    <div class="legend"><span class="key in"></span>Income<span class="key out"></span>Expenses<span class="max">Peak ${money(max)}</span></div>
-    <svg viewBox="0 0 ${W} ${H + 30}" preserveAspectRatio="none" role="img" aria-label="Income and expenses chart">
+    <div class="legend"><span class="key in"></span>In<span class="key out"></span>Out<span class="max">Peak ${money(max)}</span></div>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Money in and out chart">
       <line class="axis" x1="0" x2="${W}" y1="${H}" y2="${H}" />${bars}
-    </svg></div>`;
+    </svg>
+    <div class="axis-labels" style="grid-template-columns:repeat(${slots.length},1fr)">${slots
+      .map(
+        (s, i) => `<span>${i % labelEvery === 0 || i === slots.length - 1 ? s.label : ''}</span>`,
+      )
+      .join('')}</div></div>`;
 }
 
 const empty = (msg: string) => `<div class="empty">${msg}</div>`;
@@ -277,20 +333,19 @@ function dailyView(): string {
       (
         d,
       ) => `<tr data-day="${d.date}" class="${d.date === today ? 'is-today' : ''} ${d.count ? 'clickable' : 'muted'}">
-        <td>${dayLabel(d.date)}</td>
+        <td>${parseDate(d.date).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}</td>
         <td class="num pos">${d.income ? money(d.income) : '–'}</td>
         <td class="num neg">${d.expense ? money(d.expense) : '–'}</td>
-        <td class="num ${netClass(d.net)}">${d.count ? signed(d.net) : '–'}</td>
+        <td class="num wide ${netClass(d.net)}">${d.count ? signed(d.net) : '–'}</td>
         <td class="num ${netClass(d.cumulative)}">${signed(d.cumulative)}</td>
-        <td class="num dim">${d.count || ''}</td>
       </tr>`,
     )
     .reverse()
     .join('');
   return `
     <div class="view-head">
-      <h2>Daily tracker · ${monthLabel(state.month)}</h2>
-      <label class="check"><input type="checkbox" id="show-empty" ${state.showEmptyDays ? 'checked' : ''}/> Show days with no entries</label>
+      <h2>Daily tracker</h2>
+      <label class="check"><input type="checkbox" id="show-empty" ${state.showEmptyDays ? 'checked' : ''}/> Empty days</label>
     </div>
     ${barChart(
       days.map((d) => ({
@@ -303,18 +358,19 @@ function dailyView(): string {
       'data-day',
     )}
     <div class="mini-stats">
-      <span>Average spend / day <b>${money(Math.round(tot.expense / Math.max(1, spendDays)))}</b></span>
-      <span>Highest spend day <b>${top?.expense ? `${dayLabel(top.date)} · ${money(top.expense)}` : '–'}</b></span>
+      <span>Avg spend / day <b>${money(Math.round(tot.expense / Math.max(1, spendDays)))}</b></span>
+      <span>Biggest day <b>${top?.expense ? `${dayLabel(top.date)} · ${money(top.expense)}` : '–'}</b></span>
       <span>Days with entries <b>${active.length} / ${days.length}</b></span>
     </div>
     ${
       rows
         ? `<div class="table-wrap"><table>
-        <thead><tr><th>Day</th><th class="num">Income</th><th class="num">Expenses</th><th class="num">Net</th><th class="num">Month to date</th><th class="num">#</th></tr></thead>
+        <thead><tr><th>Day</th><th class="num">In</th><th class="num">Out</th><th class="num wide">Net</th><th class="num">Balance</th></tr></thead>
         <tbody>${rows}</tbody>
-        <tfoot><tr><td>Total</td><td class="num pos">${money(tot.income)}</td><td class="num neg">${money(tot.expense)}</td><td class="num ${netClass(tot.net)}">${signed(tot.net)}</td><td></td><td class="num dim">${tot.count}</td></tr></tfoot>
-      </table></div>`
-        : empty('No entries this month yet. Add your first income or expense on the left.')
+        <tfoot><tr><td>Total</td><td class="num pos">${money(tot.income)}</td><td class="num neg">${money(tot.expense)}</td><td class="num wide"></td><td class="num ${netClass(tot.net)}">${signed(tot.net)}</td></tr></tfoot>
+      </table></div>
+      <p class="hint">Balance is the running total for the month. Tap a day to see its entries.</p>`
+        : empty('No entries this month yet. Tap <b>+</b> to add money in or out.')
     }`;
 }
 
@@ -327,12 +383,11 @@ function monthlyView(): string {
       (
         m,
       ) => `<tr data-month="${m.month}" class="clickable ${m.month === state.month ? 'is-today' : ''} ${m.count ? '' : 'muted'}">
-        <td>${parseDate(`${m.month}-01`).toLocaleDateString(undefined, { month: 'long' })}</td>
+        <td>${parseDate(`${m.month}-01`).toLocaleDateString(undefined, { month: 'short' })}</td>
         <td class="num pos">${m.income ? money(m.income) : '–'}</td>
         <td class="num neg">${m.expense ? money(m.expense) : '–'}</td>
         <td class="num ${netClass(m.net)}">${m.count ? signed(m.net) : '–'}</td>
-        <td class="num">${m.savingsRate === null ? '–' : `${Math.round(m.savingsRate * 100)}%`}</td>
-        <td class="num dim">${m.count || ''}</td>
+        <td class="num wide">${m.savingsRate === null ? '–' : `${Math.round(m.savingsRate * 100)}%`}</td>
       </tr>`,
     )
     .join('');
@@ -348,7 +403,7 @@ function monthlyView(): string {
     ${barChart(
       months.map((m) => ({
         key: m.month,
-        label: parseDate(`${m.month}-01`).toLocaleDateString(undefined, { month: 'short' }),
+        label: parseDate(`${m.month}-01`).toLocaleDateString(undefined, { month: 'narrow' }),
         title: monthLabel(m.month),
         income: m.income,
         expense: m.expense,
@@ -356,16 +411,16 @@ function monthlyView(): string {
       'data-month',
     )}
     <div class="mini-stats">
-      <span>Average spend / month <b>${money(Math.round(tot.expense / Math.max(1, active.length)))}</b></span>
+      <span>Avg spend / month <b>${money(Math.round(tot.expense / Math.max(1, active.length)))}</b></span>
       <span>Saved in ${state.year} <b class="${netClass(tot.net)}">${signed(tot.net)}</b></span>
       <span>Savings rate <b>${tot.income ? `${Math.round((tot.net / tot.income) * 100)}%` : '–'}</b></span>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Month</th><th class="num">Income</th><th class="num">Expenses</th><th class="num">Net</th><th class="num">Saved</th><th class="num">#</th></tr></thead>
+      <thead><tr><th>Month</th><th class="num">In</th><th class="num">Out</th><th class="num">Net</th><th class="num wide">Saved</th></tr></thead>
       <tbody>${rows}</tbody>
-      <tfoot><tr><td>${state.year} total</td><td class="num pos">${money(tot.income)}</td><td class="num neg">${money(tot.expense)}</td><td class="num ${netClass(tot.net)}">${signed(tot.net)}</td><td class="num">${tot.income ? `${Math.round((tot.net / tot.income) * 100)}%` : '–'}</td><td class="num dim">${tot.count}</td></tr></tfoot>
+      <tfoot><tr><td>${state.year}</td><td class="num pos">${money(tot.income)}</td><td class="num neg">${money(tot.expense)}</td><td class="num ${netClass(tot.net)}">${signed(tot.net)}</td><td class="num wide">${tot.income ? `${Math.round((tot.net / tot.income) * 100)}%` : '–'}</td></tr></tfoot>
     </table></div>
-    <p class="hint">Click a month to open its daily tracker.</p>`;
+    <p class="hint">Tap a month to open its daily tracker.</p>`;
 }
 
 function scopedTransactions(): Transaction[] {
@@ -397,14 +452,14 @@ function categoriesView(): string {
               .map(
                 (
                   c,
-                ) => `<li data-category="${escapeHtml(c.category)}" data-cat-type="${type}" title="Show these transactions">
+                ) => `<li data-category="${escapeHtml(c.category)}" data-cat-type="${type}" title="Show these entries">
                 <div class="cat-row"><span class="cat-name">${escapeHtml(c.category)}</span><span class="cat-amt">${money(c.total)}</span></div>
                 <div class="cat-bar"><i style="width:${(c.share * 100).toFixed(1)}%"></i></div>
                 <div class="cat-meta">${(c.share * 100).toFixed(1)}% · ${c.count} ${c.count === 1 ? 'entry' : 'entries'}</div>
               </li>`,
               )
               .join('')}</ul>`
-          : empty(`No ${type === 'expense' ? 'expenses' : 'income'} in this period.`)
+          : empty(`No ${type === 'expense' ? 'spending' : 'income'} in this period.`)
       }
     </div>`;
   };
@@ -421,14 +476,14 @@ function transactionsView(): string {
   const cats = [...new Set([...categoriesFor('expense'), ...categoriesFor('income')])].sort();
   return `
     <div class="view-head">
-      <h2>Transactions · ${f.day ? dayLabel(f.day) : scopeName()}</h2>
+      <h2>History · ${f.day ? dayLabel(f.day) : scopeName()}</h2>
       ${f.day ? '' : scopeControl()}
     </div>
     <div class="filters">
       <select id="flt-type" aria-label="Type">
-        <option value="all">All types</option>
-        <option value="expense" ${f.type === 'expense' ? 'selected' : ''}>Expenses</option>
-        <option value="income" ${f.type === 'income' ? 'selected' : ''}>Income</option>
+        <option value="all">In & out</option>
+        <option value="expense" ${f.type === 'expense' ? 'selected' : ''}>Money out</option>
+        <option value="income" ${f.type === 'income' ? 'selected' : ''}>Money in</option>
       </select>
       <select id="flt-category" aria-label="Category">
         <option value="">All categories</option>
@@ -460,8 +515,8 @@ function renderTxList(): void {
   if (!txs.length) {
     list.innerHTML = empty(
       state.transactions.length
-        ? 'No transactions match.'
-        : 'Nothing here yet. Add an income or expense to get started.',
+        ? 'No entries match.'
+        : 'Nothing here yet. Tap <b>+</b> to add money in or out.',
     );
     return;
   }
@@ -471,20 +526,17 @@ function renderTxList(): void {
     .map((t) => {
       const head = t.date !== lastDate ? `<li class="date-head">${dayLabel(t.date)}</li>` : '';
       lastDate = t.date;
-      return `${head}<li class="tx ${t.type} ${t.id === state.editingId ? 'editing' : ''}">
+      return `${head}<li class="tx ${t.type} ${t.id === state.editingId ? 'editing' : ''}" data-edit="${t.id}" tabindex="0">
         <span class="tx-icon">${t.type === 'income' ? '↓' : '↑'}</span>
         <div class="tx-main"><b>${escapeHtml(t.category)}</b>${t.note ? `<small>${escapeHtml(t.note)}</small>` : ''}</div>
         <span class="tx-amt">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</span>
-        <div class="tx-actions">
-          <button class="icon-btn" data-edit="${t.id}" aria-label="Edit">✎</button>
-          <button class="icon-btn" data-delete="${t.id}" aria-label="Delete">🗑</button>
-        </div>
       </li>`;
     })
     .join('');
   list.innerHTML = `
     <div class="list-total">${txs.length} shown · <span class="pos">${money(tot.income)}</span> in · <span class="neg">${money(tot.expense)}</span> out · net <b class="${netClass(tot.net)}">${signed(tot.net)}</b></div>
-    <ul class="tx-list">${items}</ul>`;
+    <ul class="tx-list">${items}</ul>
+    <p class="hint">Tap an entry to edit or delete it.</p>`;
 }
 
 // ---- form ----
@@ -498,15 +550,14 @@ function setFormType(type: TxType): void {
   form.submit.textContent = state.editingId
     ? 'Save changes'
     : type === 'income'
-      ? 'Add income'
-      : 'Add expense';
+      ? 'Add money in'
+      : 'Add money out';
   const cats = categoriesFor(type);
   if (!state.editingId && !cats.includes(form.category.value)) form.category.value = '';
   $('category-list').innerHTML = cats
     .map((c) => `<option value="${escapeHtml(c)}"></option>`)
     .join('');
   $('category-chips').innerHTML = cats
-    .slice(0, 8)
     .map(
       (c) =>
         `<button type="button" class="chip ${c === form.category.value ? 'active' : ''}" data-chip="${escapeHtml(c)}">${escapeHtml(c)}</button>`,
@@ -520,19 +571,21 @@ function defaultDate(): string {
   return monthOf(today) === state.month ? today : `${state.month}-01`;
 }
 
-function resetForm(): void {
+function openAdd(): void {
   state.editingId = null;
   form.amount.value = '';
   form.category.value = '';
   form.note.value = '';
   form.date.value = defaultDate();
   form.error.textContent = '';
-  form.cancel.hidden = true;
-  $('form-title').textContent = 'Add transaction';
+  form.del.hidden = true;
+  $('form-title').textContent = 'Add money in or out';
   setFormType(state.formType);
+  showSheet(form.sheet);
+  form.amount.focus();
 }
 
-function startEdit(id: string): void {
+function openEdit(id: string): void {
   const t = state.transactions.find((x) => x.id === id);
   if (!t) return;
   state.editingId = id;
@@ -541,13 +594,14 @@ function startEdit(id: string): void {
   form.date.value = t.date;
   form.note.value = t.note;
   form.error.textContent = '';
-  form.cancel.hidden = false;
-  $('form-title').textContent = 'Edit transaction';
+  form.del.hidden = false;
+  $('form-title').textContent = 'Edit entry';
   setFormType(t.type);
   renderTxList();
-  form.amount.focus();
-  form.el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  showSheet(form.sheet);
 }
+
+$('add-open').onclick = openAdd;
 
 form.el.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -558,30 +612,43 @@ form.el.addEventListener('submit', (e) => {
     return void (form.error.textContent = 'Enter an amount greater than 0 (up to 2 decimals).');
   if (!category) return void (form.error.textContent = 'Pick or type a category.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return void (form.error.textContent = 'Pick a date.');
+  const editing = state.editingId;
   const tx: Transaction = {
-    id: state.editingId ?? newId(),
+    id: editing ?? newId(),
     type: state.formType,
     amount,
     category,
     date,
     note: form.note.value.trim(),
   };
-  if (state.editingId) {
+  if (editing) {
     state.transactions = state.transactions.map((t) => (t.id === tx.id ? tx : t));
   } else {
     state.transactions.push(tx);
   }
   persist();
+  state.editingId = null;
+  closeSheet();
   state.month = monthOf(date);
   state.year = Number(date.slice(0, 4));
-  resetForm();
   render();
-  form.amount.focus();
+  toast(
+    editing
+      ? 'Changes saved'
+      : `${tx.type === 'income' ? 'Money in' : 'Money out'}: ${money(tx.amount)} · ${tx.category}`,
+  );
 });
 
-form.cancel.onclick = () => {
-  resetForm();
-  renderTxList();
+form.del.onclick = () => {
+  const t = state.transactions.find((x) => x.id === state.editingId);
+  if (!t) return;
+  if (!confirm(`Delete ${money(t.amount)} (${t.category}) on ${dayLabel(t.date)}?`)) return;
+  state.transactions = state.transactions.filter((x) => x.id !== t.id);
+  persist();
+  state.editingId = null;
+  closeSheet();
+  render();
+  toast('Entry deleted');
 };
 
 app.querySelectorAll<HTMLButtonElement>('[data-type]').forEach((b) => {
@@ -607,7 +674,6 @@ function goMonth(month: string): void {
   state.month = month;
   state.year = Number(month.slice(0, 4));
   state.filter.day = '';
-  if (!state.editingId) form.date.value = defaultDate();
   render();
 }
 
@@ -619,10 +685,14 @@ function setTab(tab: Tab): void {
   state.tab = tab;
   persistPrefs();
   render();
+  window.scrollTo({ top: 0 });
 }
 
 app.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((b) => {
-  b.onclick = () => setTab(b.dataset.tab as Tab);
+  b.onclick = () => {
+    if (b.dataset.tab === 'transactions') state.filter.day = '';
+    setTab(b.dataset.tab as Tab);
+  };
 });
 
 function showDay(day: string): void {
@@ -666,20 +736,14 @@ view.addEventListener('click', (e) => {
   if (el.closest('#clear-day')) return ((state.filter.day = ''), renderView());
 
   const editId = el.closest<HTMLElement>('[data-edit]')?.dataset.edit;
-  if (editId) return startEdit(editId);
+  if (editId) openEdit(editId);
+});
 
-  const delId = el.closest<HTMLElement>('[data-delete]')?.dataset.delete;
-  if (delId) {
-    const t = state.transactions.find((x) => x.id === delId);
-    if (
-      t &&
-      confirm(`Delete ${t.type} of ${money(t.amount)} (${t.category}) on ${dayLabel(t.date)}?`)
-    ) {
-      state.transactions = state.transactions.filter((x) => x.id !== delId);
-      if (state.editingId === delId) resetForm();
-      persist();
-      render();
-    }
+view.addEventListener('keydown', (e) => {
+  const id = (e.target as HTMLElement).dataset.edit;
+  if (id && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
+    openEdit(id);
   }
 });
 
@@ -705,6 +769,16 @@ view.addEventListener('input', (e) => {
   renderTxList();
 });
 
+// Android back button: close a sheet, then step back to the Daily tab, then leave the app.
+onBackButton(() => {
+  if (closeSheet()) return true;
+  if (state.tab !== 'daily') {
+    setTab('daily');
+    return true;
+  }
+  return false;
+});
+
 // ---- currency, import & export ----
 
 const currencySelect = $<HTMLSelectElement>('currency');
@@ -715,20 +789,21 @@ currencySelect.onchange = () => {
   render();
 };
 
-function download(name: string, type: string, body: string): void {
-  const url = URL.createObjectURL(new Blob([body], { type }));
-  const a = Object.assign(document.createElement('a'), { href: url, download: name });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+async function share(name: string, type: string, body: string): Promise<void> {
+  try {
+    await saveTextFile(name, type, body);
+    if (!isNative) toast(`Saved ${name}`);
+  } catch (err) {
+    // Closing Android's share sheet without picking an app rejects; that's not an error.
+    if (!String(err).toLowerCase().includes('cancel')) alert(`Couldn't save the file: ${err}`);
+  }
 }
 
 const stamp = () => toISODate(new Date());
 $('export-csv').onclick = () =>
-  download(`money-tracker-${stamp()}.csv`, 'text/csv', toCSV(state.transactions));
+  share(`money-tracker-${stamp()}.csv`, 'text/csv', toCSV(state.transactions));
 $('export-json').onclick = () =>
-  download(
+  share(
     `money-tracker-backup-${stamp()}.json`,
     'application/json',
     JSON.stringify(
@@ -774,12 +849,14 @@ fileInput.onchange = async () => {
     alert(`Nothing new to import${skipped ? ` (${skipped} rows skipped)` : ''}.`);
     return;
   }
-  if (!confirm(`Import ${incoming.length} transactions${skipped ? ` (${skipped} skipped)` : ''}?`))
+  if (!confirm(`Import ${incoming.length} entries${skipped ? ` (${skipped} skipped)` : ''}?`))
     return;
   state.transactions.push(...incoming);
   persist();
+  closeSheet();
   goMonth(monthOf(sortTransactions(incoming)[0]!.date));
+  toast(`Imported ${incoming.length} entries`);
 };
 
-resetForm();
+setFormType(state.formType);
 render();
